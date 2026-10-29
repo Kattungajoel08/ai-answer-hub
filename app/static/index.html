@@ -1,0 +1,443 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Answer Hub</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--card:#151d32;--text:#eef2ff;--muted:#9aa7c2;--line:#303c57;--accent:#9b8cff}
+:root.light{color-scheme:light;--bg:#f3f5fb;--card:#fff;--text:#182039;--muted:#66718a;--line:#dfe4ef;--accent:#6654dd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Arial,sans-serif}
+.app-shell{display:flex;min-height:100vh}
+.sidebar{width:280px;flex:0 0 280px;background:var(--card);border-right:1px solid var(--line);padding:18px;display:flex;flex-direction:column;gap:14px;transition:width .2s ease,flex-basis .2s ease,padding .2s ease;overflow:hidden}
+.sidebar.collapsed{width:0;flex-basis:0;padding-left:0;padding-right:0;border-right:0}
+.sidebar-inner{width:242px;min-width:242px}
+.sidebar-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sidebar h2{font-size:16px;margin:8px 0}
+.history-list{display:flex;flex-direction:column;gap:7px;max-height:calc(100vh - 190px);overflow:auto}
+.history-item{display:flex;align-items:center;gap:6px}
+.history-open{flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:transparent}
+.history-delete{padding:7px 9px}
+.empty-history{font-size:13px;color:var(--muted);padding:8px 2px}
+.workspace{flex:1;min-width:0}
+main{max-width:1150px;margin:auto;padding:28px 18px}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.header-actions{display:flex;align-items:center;gap:8px}
+#retry-failed{display:block;margin:0 auto 12px}
+#stop-generation{display:block;margin:0 auto 12px;border-color:#d66;color:#e87979}
+#stop-generation:disabled{display:none}
+h1{text-align:center;font-size:clamp(32px,5vw,52px);margin:55px 0 10px}
+h1 span{color:var(--accent)}
+.sub{text-align:center;color:var(--muted)}
+form{display:flex;gap:10px;margin:28px auto;max-width:850px;background:var(--card);padding:10px;border:1px solid var(--line);border-radius:16px}
+textarea{flex:1;min-width:0;min-height:52px;max-height:160px;resize:vertical;background:transparent;color:var(--text);border:0;outline:0;font:inherit;padding:12px}
+button{cursor:pointer;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--card);color:var(--text)}
+.primary{background:var(--accent);color:white;border:0;font-weight:bold}
+button:disabled{opacity:.5;cursor:wait}
+#status{text-align:center;color:var(--muted);min-height:24px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:25px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;min-height:240px;display:flex;flex-direction:column}
+.card h2{font-size:17px;margin:0;padding:17px 18px;border-bottom:1px solid var(--line)}
+.answer{padding:18px;white-space:pre-wrap;overflow-wrap:anywhere;flex:1}
+.muted{color:var(--muted)}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+.note{color:var(--muted);font-size:12px;text-align:center;margin-top:25px}
+@media(max-width:800px){.sidebar{position:fixed;z-index:5;top:0;bottom:0;left:0;box-shadow:0 8px 30px #0003}.sidebar.collapsed{transform:translateX(-100%);width:280px;flex-basis:280px;padding:18px;border-right:1px solid var(--line)}.workspace{width:100%}}
+@media(max-width:650px){.grid{grid-template-columns:1fr}form{flex-direction:column}.primary{min-height:46px}h1{margin-top:38px}main{padding:20px 12px}.header-actions{gap:5px}#theme{padding:9px 10px}}
+</style>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidebar" id="sidebar" aria-label="Recent searches">
+  <div class="sidebar-inner">
+    <div class="sidebar-top"><strong>Recent searches</strong><button id="clear-history" type="button" title="Clear recent searches">Clear</button></div>
+    <p class="empty-history" id="empty-history">Your recent questions will appear here.</p>
+    <div class="history-list" id="history-list"></div>
+  </div>
+</aside>
+<div class="workspace">
+<main>
+<header>
+<div class="header-actions"><button id="toggle-sidebar" type="button" aria-label="Toggle sidebar" title="Toggle sidebar">☰</button><strong>✦ AI Answer Hub</strong></div>
+<div class="header-actions"><button id="theme">☀ Light mode</button></div>
+</header>
+<h1>Ask once. <span>Compare answers.</span></h1>
+<p class="sub">One question. Four AI models. One workspace.</p>
+<form id="form">
+<textarea id="question" maxlength="12000" placeholder="Ask anything... Enter to submit, Shift+Enter for a new line" required></textarea>
+<button class="primary" id="submit" type="submit">Compare answers ↗</button>
+<button id="stop-generation" type="button" disabled>■ Stop generation</button>
+</form>
+<button id="retry-failed" type="button" disabled>↻ Retry failed models</button>
+<div id="status" role="status"></div>
+<section class="grid">
+<article class="card">
+<h2>✳ ChatGPT</h2>
+<div class="answer muted" id="a-chatgpt">Your ChatGPT answer will appear here.</div>
+<div class="foot"><span id="s-chatgpt">Ready</span><button data-copy="chatgpt" disabled>Copy answer</button></div>
+</article>
+<article class="card">
+<h2>✦ Gemini</h2>
+<div class="answer muted" id="a-gemini">Your Gemini answer will appear here.</div>
+<div class="foot"><span id="s-gemini">Ready</span><button data-copy="gemini" disabled>Copy answer</button></div>
+</article>
+<article class="card">
+<h2>◉ Perplexity</h2>
+<div class="answer muted" id="a-perplexity">Your Perplexity answer will appear here.</div>
+<div class="foot"><span id="s-perplexity">Ready</span><button data-copy="perplexity" disabled>Copy answer</button></div>
+</article>
+<article class="card">
+<h2>✺ Claude</h2>
+<div class="answer muted" id="a-claude">Your Claude answer will appear here.</div>
+<div class="foot"><span id="s-claude">Ready</span><button data-copy="claude" disabled>Copy answer</button></div>
+</article>
+</section>
+<section class="card" style="margin-top:18px">
+<h2>⚖ Best response evaluation <span class="muted" style="font-size:12px;font-weight:normal">· estimated quality, not verified accuracy</span></h2>
+<div class="answer muted" id="evaluation-result">Evaluation appears when at least two providers succeed.</div>
+</section>
+<p class="note">Each provider is called independently. API usage charges may apply.</p>
+</main>
+</div>
+</div>
+<script>
+const models = ["chatgpt", "gemini", "perplexity", "claude"];
+const evaluationEl = document.querySelector("#evaluation-result");
+const answers = {};
+const form = document.querySelector("#form");
+const input = document.querySelector("#question");
+const statusEl = document.querySelector("#status");
+const submit = document.querySelector("#submit");
+const retryButton = document.querySelector("#retry-failed");
+const sidebar = document.querySelector("#sidebar");
+const historyList = document.querySelector("#history-list");
+const emptyHistory = document.querySelector("#empty-history");
+const HISTORY_KEY = "ai-hub-history";
+const HISTORY_LIMIT = 30;
+
+let lastQuestion = "";
+let failedModels = new Set();
+let isRunning = false;
+let currentAbortController = null;
+let stopRequested = false;
+let currentHistoryId = null;
+let historyItems = loadHistory();
+
+function loadHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch { return []; }
+}
+function saveHistory() {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(historyItems.slice(0, HISTORY_LIMIT))); }
+  catch { statusEl.textContent = "Could not save search history in this browser."; }
+}
+function renderHistory() {
+  historyList.replaceChildren();
+  emptyHistory.hidden = historyItems.length > 0;
+  for (const item of historyItems) {
+    const row = document.createElement("div");
+    row.className = "history-item";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "history-open";
+    open.textContent = item.question;
+    open.title = item.question;
+    open.addEventListener("click", () => openHistoryItem(item.id));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "history-delete";
+    remove.textContent = "×";
+    remove.title = "Delete this search";
+    remove.setAttribute("aria-label", "Delete search");
+    remove.addEventListener("click", () => {
+      historyItems = historyItems.filter(entry => entry.id !== item.id);
+      if (currentHistoryId === item.id) currentHistoryId = null;
+      saveHistory();
+      renderHistory();
+    });
+    row.append(open, remove);
+    historyList.append(row);
+  }
+}
+function createHistoryItem(question) {
+  const item = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    question, answers: {}, statuses: {}, updatedAt: new Date().toISOString()
+  };
+  historyItems = [item, ...historyItems.filter(entry => entry.question !== question)].slice(0, HISTORY_LIMIT);
+  currentHistoryId = item.id;
+  saveHistory();
+  renderHistory();
+}
+function persistCurrentResults() {
+  if (!currentHistoryId) return;
+  const item = historyItems.find(entry => entry.id === currentHistoryId);
+  if (!item) return;
+  item.answers = { ...answers };
+  item.evaluationText = evaluationEl.textContent;
+  item.statuses = {};
+  for (const model of models) item.statuses[model] = document.querySelector("#s-" + model).textContent;
+  item.updatedAt = new Date().toISOString();
+  historyItems = [item, ...historyItems.filter(entry => entry.id !== item.id)];
+  saveHistory();
+  renderHistory();
+}
+function showAnswer(model, text, isError = false) {
+  const el = document.querySelector("#a-" + model);
+  el.textContent = text;
+  el.classList.toggle("muted", !isError);
+  el.style.color = isError ? "#e87979" : "";
+}
+function setState(model, text) { document.querySelector("#s-" + model).textContent = text; }
+function updateRetryButton() { retryButton.disabled = isRunning || failedModels.size === 0 || !lastQuestion; }
+
+function openHistoryItem(id) {
+  if (isRunning) return;
+  const item = historyItems.find(entry => entry.id === id);
+  if (!item) return;
+  currentHistoryId = item.id;
+  lastQuestion = item.question;
+  input.value = item.question;
+  failedModels = new Set();
+  for (const model of models) {
+    delete answers[model];
+    const answer = item.answers && item.answers[model];
+    if (answer) {
+      answers[model] = answer;
+      showAnswer(model, answer);
+      setState(model, item.statuses && item.statuses[model] || "Complete");
+      document.querySelector('[data-copy="' + model + '"]').disabled = false;
+    } else {
+      showAnswer(model, "No saved answer for this model. You can retry it.", true);
+      setState(model, "Not saved");
+      document.querySelector('[data-copy="' + model + '"]').disabled = true;
+      failedModels.add(model);
+    }
+  }
+  evaluationEl.textContent = item.evaluationText || "No saved evaluation for this search.";
+  evaluationEl.classList.toggle("muted", !item.evaluationText);
+  statusEl.textContent = "Opened saved search. No API calls were made.";
+  updateRetryButton();
+  if (window.innerWidth <= 800) sidebar.classList.add("collapsed");
+}
+
+function renderEvaluation(result) {
+  evaluationEl.replaceChildren();
+  evaluationEl.classList.remove("muted");
+  const intro = document.createElement("p");
+  intro.textContent = "Scores are heuristic estimates out of 10. Factual support signals do not verify truth; no answer was independently fact-checked.";
+  evaluationEl.append(intro);
+  const heading = document.createElement("h3");
+  heading.textContent = result.recommended_model
+    ? "Recommended response: " + result.recommended_model.charAt(0).toUpperCase() + result.recommended_model.slice(1)
+    : "No clear winner";
+  evaluationEl.append(heading);
+  const note = document.createElement("p");
+  note.textContent = result.recommendation_note || "";
+  evaluationEl.append(note);
+  const labels = {
+    factual_support_signals: "Factual support signals", relevance: "Relevance",
+    completeness: "Completeness", reasoning: "Reasoning", clarity: "Clarity",
+    overall_estimated_quality: "Overall estimated quality"
+  };
+  const grid = document.createElement("div");
+  grid.style.display = "grid";
+  grid.style.gridTemplateColumns = "repeat(auto-fit,minmax(220px,1fr))";
+  grid.style.gap = "12px";
+  for (const [model, detail] of Object.entries(result.scores || {})) {
+    const card = document.createElement("div");
+    card.style.border = "1px solid var(--line)";
+    card.style.borderRadius = "10px";
+    card.style.padding = "12px";
+    const title = document.createElement("strong");
+    title.textContent = model.charAt(0).toUpperCase() + model.slice(1) +
+      " — " + detail.scores.overall_estimated_quality + "/10";
+    card.append(title);
+    for (const [key, label] of Object.entries(labels)) {
+      const p = document.createElement("p");
+      p.style.margin = "7px 0";
+      p.style.fontSize = "13px";
+      p.textContent = label + ": " + detail.scores[key] + "/10";
+      card.append(p);
+    }
+    grid.append(card);
+  }
+  evaluationEl.append(grid);
+}
+
+async function runModels(question, selectedModels, isRetry = false) {
+  if (!question || !selectedModels.length || isRunning) return;
+  isRunning = true;
+  stopRequested = false;
+  currentAbortController = new AbortController();
+  submit.disabled = true;
+  submit.textContent = "Working...";
+  document.querySelector("#stop-generation").disabled = false;
+  retryButton.disabled = true;
+
+  if (!isRetry) {
+    evaluationEl.textContent = "Scoring response quality after at least two providers succeed...";
+    evaluationEl.classList.add("muted");
+    lastQuestion = question;
+    failedModels = new Set();
+    for (const model of models) {
+      delete answers[model];
+      showAnswer(model, "⏳ Generating response...");
+      setState(model, "Loading...");
+      document.querySelector('[data-copy="' + model + '"]').disabled = true;
+    }
+    createHistoryItem(question);
+  } else {
+    for (const model of selectedModels) {
+      delete answers[model];
+      showAnswer(model, "⏳ Retrying response...");
+      setState(model, "Retrying...");
+      document.querySelector('[data-copy="' + model + '"]').disabled = true;
+      failedModels.delete(model);
+    }
+  }
+
+  statusEl.textContent = isRetry ? "Retrying failed models..." : "Waiting for the first AI response...";
+  let completedThisRun = 0;
+  try {
+    const response = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, models: selectedModels, previous_answers: isRetry ? { ...answers } : {} }),
+      signal: currentAbortController.signal
+    });
+    if (!response.ok) throw new Error("Server error " + response.status);
+    if (!response.body) throw new Error("Your browser does not support streamed responses.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+      for (const eventText of events) {
+        const dataLine = eventText.split("\n").find(line => line.startsWith("data: "));
+        if (!dataLine) continue;
+        const result = JSON.parse(dataLine.slice(6));
+        if (result.type === "evaluation") { renderEvaluation(result); continue; }
+        if (result.type === "delta" && result.model === "gemini") {
+          answers.gemini = (answers.gemini || "") + (result.delta || "");
+          showAnswer("gemini", answers.gemini);
+          setState("gemini", "Generating…");
+          document.querySelector('[data-copy="gemini"]').disabled = true;
+          persistCurrentResults();
+          continue;
+        }
+        completedThisRun++;
+        if (result.ok) {
+          answers[result.model] = result.answer;
+          showAnswer(result.model, result.answer);
+          setState(result.model, "Complete");
+          document.querySelector('[data-copy="' + result.model + '"]').disabled = false;
+          failedModels.delete(result.model);
+        } else {
+          showAnswer(result.model, result.error || "Provider request failed.", true);
+          setState(result.model, "Failed");
+          failedModels.add(result.model);
+        }
+        persistCurrentResults();
+        const successCount = models.filter(model => Boolean(answers[model])).length;
+        statusEl.textContent = successCount + " of " + models.length + " models responded. " +
+          completedThisRun + " of " + selectedModels.length + " finished in this run.";
+      }
+      if (done) break;
+    }
+    const successCount = models.filter(model => Boolean(answers[model])).length;
+    statusEl.textContent = successCount + " of " + models.length + " models responded." +
+      (failedModels.size ? " " + failedModels.size + " model(s) can be retried." : "");
+  } catch (error) {
+    if (stopRequested || error.name === "AbortError") {
+      for (const model of selectedModels) {
+        if (!answers[model]) setState(model, "Stopped");
+      }
+      statusEl.textContent = "Generation stopped. Completed answers have been kept.";
+    } else {
+      for (const model of selectedModels) {
+        if (!answers[model]) {
+          failedModels.add(model);
+          setState(model, "Failed");
+          showAnswer(model, "Could not read responses: " + error.message, true);
+        }
+      }
+      statusEl.textContent = "Could not read responses: " + error.message;
+    }
+    persistCurrentResults();
+  } finally {
+    isRunning = false;
+    currentAbortController = null;
+    document.querySelector("#stop-generation").disabled = true;
+    submit.disabled = false;
+    submit.textContent = "Compare answers ↗";
+    updateRetryButton();
+  }
+}
+
+document.querySelector("#stop-generation").addEventListener("click", () => {
+  if (!isRunning || !currentAbortController) return;
+  stopRequested = true;
+  statusEl.textContent = "Stopping generation…";
+  currentAbortController.abort();
+});
+
+form.addEventListener("submit", async event => {
+  event.preventDefault();
+  const question = input.value.trim();
+  if (question) await runModels(question, models, false);
+});
+
+// Enter submits the prompt; Shift+Enter inserts a newline.
+input.addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    if (!isRunning) form.requestSubmit();
+  }
+});
+retryButton.addEventListener("click", async () => {
+  if (failedModels.size) await runModels(lastQuestion, [...failedModels], true);
+});
+document.querySelector("#toggle-sidebar").addEventListener("click", () => sidebar.classList.toggle("collapsed"));
+document.querySelector("#clear-history").addEventListener("click", () => {
+  if (!historyItems.length) return;
+  historyItems = [];
+  currentHistoryId = null;
+  saveHistory();
+  renderHistory();
+  statusEl.textContent = "Recent search history cleared.";
+});
+document.querySelectorAll("[data-copy]").forEach(button => {
+  button.addEventListener("click", async () => {
+    const answer = answers[button.dataset.copy];
+    if (!answer) return;
+    try {
+      await navigator.clipboard.writeText(answer);
+      button.textContent = "Copied!";
+      setTimeout(() => button.textContent = "Copy answer", 1200);
+    } catch {
+      statusEl.textContent = "Clipboard unavailable. Select and copy the answer manually.";
+    }
+  });
+});
+const theme = document.querySelector("#theme");
+function setTheme(light) {
+  document.documentElement.classList.toggle("light", light);
+  theme.textContent = light ? "☾ Dark mode" : "☀ Light mode";
+  try { localStorage.setItem("ai-hub-theme", light ? "light" : "dark"); } catch {}
+}
+let savedTheme = "dark";
+try { savedTheme = localStorage.getItem("ai-hub-theme") || "dark"; } catch {}
+setTheme(savedTheme === "light");
+theme.addEventListener("click", () => setTheme(!document.documentElement.classList.contains("light")));
+renderHistory();
+updateRetryButton();
+</script>
+</body>
+</html>
